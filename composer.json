@@ -1,0 +1,38 @@
+{
+  "name": "flowspeech/flowspeech-php",
+  "description": "PHP client for the FlowSpeech text-to-speech API.",
+  "type": "library",
+  "license": "MIT",
+  "homepage": "https://flowspeech.io/",
+  "keywords": [
+    "flowspeech",
+    "text-to-speech",
+    "tts",
+    "ai-voice",
+    "speech"
+  ],
+  "authors": [
+    {
+      "name": "FlowSpeech",
+      "email": "support@flowspeech.io"
+    }
+  ],
+  "require": {
+    "php": ">=8.1",
+    "ext-curl": "*",
+    "ext-json": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "FlowSpeech\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "FlowSpeech\\Tests\\": "tests/"
+    }
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^10.5 || ^11.0"
+  }
+}
