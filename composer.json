@@ -1,6 +1,6 @@
 {
   "name": "flowspeech/flowspeech-php",
-  "description": "PHP client for the FlowSpeech text-to-speech API.",
+  "description": "PHP client for FlowSpeech public API v1 asynchronous text-to-speech jobs.",
   "type": "library",
   "license": "MIT",
   "homepage": "https://flowspeech.io/",
@@ -31,6 +31,12 @@
     "psr-4": {
       "FlowSpeech\\Tests\\": "tests/"
     }
+  },
+  "scripts": {
+    "test": "php tests/contract.php"
+  },
+  "archive": {
+    "exclude": ["/tests", "/scripts", "/dist", "/.tools", "/.phpunit.cache", "/.github", "/RELEASE_REPORT.md", "/phpunit.xml.dist", "/.env"]
   },
   "require-dev": {
     "phpunit/phpunit": "^10.5 || ^11.0"
