@@ -36,6 +36,22 @@ export async function startFixture(certDir) {
     }
     records.push({ role, method: req.method, path: req.url, headers: req.headers, body, at: Date.now() });
     if (role === 'api') {
+      const interrupted = /^api-(truncated|slow-body)-(401|429|503)$/.exec(scenario);
+      if (interrupted) {
+        res.writeHead(Number(interrupted[2]), { 'Content-Type': 'application/json',
+          'Content-Length': '100', 'Retry-After': '30', Connection: 'close' });
+        res.write('{');
+        if (interrupted[1] === 'truncated') res.end();
+        else {
+          const timer = setTimeout(() => res.end(), 2500);
+          req.socket.once('close', () => clearTimeout(timer));
+        }
+        return;
+      }
+      if (scenario === 'privacy-http-key' || scenario === 'privacy-http-url') {
+        const reflected = scenario === 'privacy-http-key' ? 'fixture-only' : 'https://private.example.test/?signature=private-fixture';
+        send(res, { error: { code: reflected, message: reflected, retryable: false }, traceId: reflected }, 403); return;
+      }
       if (scenario === 'api-redirect') {
         send(res, {}, 307, { Location: endpoints.storage + '/sink' }); return;
       }
@@ -58,9 +74,12 @@ export async function startFixture(certDir) {
       }
       let status = (scenario === 'queued' || scenario.startsWith('identity-poll-')) && created > 0 && reads === 0 ? 'queued' : 'success';
       if (['failed', 'cancelled'].includes(scenario)) status = scenario;
+      if (scenario === 'privacy-terminal') status = 'failed';
+      if (scenario === 'privacy-null-queued') status = 'queued';
       const result = { url: endpoints.storage + '/recording.wav', mimeType: 'audio/wav',
         sampleRate: 24000, channels: 1, bitsPerSample: 16 };
       if (scenario === 'http-result') result.url = endpoints.http + '/sink';
+      if (scenario === 'privacy-download') result.url += '?signature=private-fixture';
       if (scenario === 'credential-url') result.url = endpoints.storage.replace('https://', 'https://user:fixture@') + '/recording.wav';
       const job = { id, requestId, status, result: status === 'success' ? result : null,
         usage: { billableCharacters: 5, reservedCredits: 0, chargedCredits: status === 'success' ? 5 : 0 } };
@@ -74,11 +93,20 @@ export async function startFixture(certDir) {
       if (scenario === 'deleted') { job.result = null; job.resultDeleted = true; }
       if (scenario === 'malformed') job.result.sampleRate = 48000;
       if (status === 'failed' || status === 'cancelled') job.error = { code: 'FIXTURE_TERMINAL' };
+      if (scenario.startsWith('privacy-null-')) job.error = null;
+      if (scenario === 'privacy-terminal') {
+        job.error = { code: 'fixture-only', message: 'https://private.example.test/?signature=private-fixture',
+          retryable: true, details: { private: 'fixture-only' } };
+        job.traceId = 'fixture-only';
+      }
       send(res, job, status === 'queued' ? 202 : 200, { 'Retry-After': '5', 'Set-Cookie': 'fixture-session=not-a-secret; Path=/; Secure' });
       return;
     }
     if (role === 'storage') {
       downloaded++;
+      if (scenario === 'privacy-download') {
+        send(res, { error: { message: 'https://private.example.test/?signature=private-fixture' } }, 403); return;
+      }
       if (scenario === 'storage-redirect') {
         res.writeHead(302, { Location: endpoints.http + '/sink' }); res.end(); return;
       }

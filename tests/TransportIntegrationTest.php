@@ -77,6 +77,28 @@ final class TransportIntegrationTest extends TestCase
         }
     }
 
+    public function testInterruptedErrorBodyRetainsStatusAndCooldown(): void
+    {
+        foreach (['truncated', 'slow-body'] as $mode) {
+            foreach ([401, 429, 503] as $status) {
+                $this->control('api-' . $mode . '-' . $status);
+                $waits = [];
+                $client = $this->client(['max_retries' => 1, 'request_timeout' => 1,
+                    'sleep' => static function (float $seconds) use (&$waits): void { $waits[] = $seconds; }], 120);
+                $error = $this->expectCode(fn() => $client->createJob(
+                    ['mode' => 'single', 'text' => 'Hello', 'voiceName' => 'Kore'], self::REQUEST_ID), 'network_error');
+                self::assertSame($status, $error->getCode());
+                self::assertSame($status !== 401, $error->retryable);
+                self::assertSame(30.0, $error->retryAfterSeconds);
+                self::assertSame(self::REQUEST_ID, $error->requestId);
+                self::assertSame($status === 401 ? [] : [30.0], $waits);
+                $records = $this->control()['records'];
+                self::assertCount($status === 401 ? 1 : 2, $records);
+                if ($status !== 401) self::assertSame($records[0]['body'], $records[1]['body']);
+            }
+        }
+    }
+
     public function testRealMultiSpeakerBody(): void
     {
         $this->client()->generateMultiSpeakerSpeech("Alice: Hi\nBob: Welcome",
@@ -86,6 +108,32 @@ final class TransportIntegrationTest extends TestCase
             ['speaker' => 'Alice', 'text' => 'Hi', 'voiceName' => 'Kore'],
             ['speaker' => 'Bob', 'text' => 'Welcome', 'voiceName' => 'Puck'],
         ]]], $body);
+    }
+
+    public function testPrivateHttpTerminalAndDownloadErrorsStayLocal(): void
+    {
+        foreach (['privacy-http-key', 'privacy-http-url', 'privacy-terminal', 'privacy-download'] as $scenario) {
+            $this->control($scenario);
+            $error = $this->expectCode(fn() => $this->generate($this->client()),
+                $scenario === 'privacy-terminal' ? 'failed' : 'http_error');
+            self::assertSame(self::REQUEST_ID, $error->requestId);
+            self::assertNull($error->traceId);
+            self::assertNull($error->getPrevious());
+            self::assertStringNotContainsString('fixture-only', (string) $error);
+            self::assertStringNotContainsString('private.example.test', (string) $error);
+            self::assertStringNotContainsString('signature=private-fixture', (string) $error);
+            if ($scenario === 'privacy-terminal' || $scenario === 'privacy-download') {
+                self::assertNotNull($error->jobId);
+                self::assertSame(1, $this->control()['created']);
+            }
+        }
+        foreach (['privacy-null-queued', 'privacy-null-success', 'privacy-terminal'] as $scenario) {
+            $this->control($scenario);
+            $job = $this->client()->createJob(['mode' => 'single', 'text' => 'Hello', 'voiceName' => 'Kore'], self::REQUEST_ID);
+            self::assertArrayHasKey('error', $job);
+            self::assertSame($scenario === 'privacy-terminal' ?
+                ['code' => 'failed', 'message' => 'FlowSpeech job failed.', 'retryable' => true] : null, $job['error']);
+        }
     }
 
     public function testRealPollingWaitsAtLeastFiveSeconds(): void

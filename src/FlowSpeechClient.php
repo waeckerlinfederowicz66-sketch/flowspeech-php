@@ -297,6 +297,24 @@ final class FlowSpeechClient
         if (!in_array($job['status'] ?? null, ['queued', 'running', 'merging', 'settling', 'success', 'failed', 'cancelled'], true)) {
             throw $this->failure('Unknown job status.', 'invalid_response');
         }
+        if (isset($job['error'])) {
+            if (!is_array($job['error'])) {
+                throw $this->failure('Malformed job error.', 'invalid_response');
+            }
+            $details = $job['error'];
+            $terminal = in_array($job['status'], ['failed', 'cancelled'], true);
+            $job['error'] = [
+                'code' => $this->errorToken($details['code'] ?? null) ?? ($terminal ? $job['status'] : 'job_error'),
+                'message' => $terminal ? 'FlowSpeech job ' . $job['status'] . '.' : 'FlowSpeech job reported an error.',
+                'retryable' => ($details['retryable'] ?? false) === true,
+            ];
+            if (array_key_exists('traceId', $details)) {
+                $job['error']['traceId'] = $this->errorToken($details['traceId']);
+            }
+        }
+        if (array_key_exists('traceId', $job)) {
+            $job['traceId'] = $this->errorToken($job['traceId']);
+        }
         if ($job['status'] === 'success') {
             if (($job['resultDeleted'] ?? false) === true && array_key_exists('result', $job) && $job['result'] === null) {
                 return $job;
@@ -431,22 +449,29 @@ final class FlowSpeechClient
                 $error = is_array($data['error'] ?? null) ? $data['error'] : [];
                 $retryable = $status === 429 || ($status >= 500 && (!$api || ($error['retryable'] ?? false) === true));
                 $delay = $this->retryDelay($response['headers']);
-                $failure = $this->failure($api && is_string($error['message'] ?? null) ?
-                    $error['message'] : 'HTTP request failed (' . $status . ').',
-                    is_string($error['code'] ?? null) ? $error['code'] : 'http_error', $status, $retryable);
-                $failure->traceId = is_string($data['traceId'] ?? null) ? $data['traceId'] : null;
+                $failure = $this->failure('FlowSpeech ' . ($api ? 'API' : 'download') . ' returned HTTP ' . $status . '.',
+                    $this->errorToken($error['code'] ?? null) ?? 'http_error', $status, $retryable);
+                $failure->traceId = $this->errorToken($data['traceId'] ?? null);
                 $failure->retryAfterSeconds = $delay;
                 throw $failure;
             } catch (FlowSpeechException $error) {
                 $error->requestId = $this->requestId;
                 $error->jobId = $this->jobId;
+                $delay = max($delay, $error->retryAfterSeconds);
+                $this->retryAfter = $delay;
                 if (!$error->retryable || $attempt >= $this->maxRetries) { throw $error; }
                 $this->pause(max($delay, 5 * (2 ** $attempt)), $deadline);
             }
         }
     }
 
-    private function retryDelay(array $headers): float
+    private function errorToken(mixed $value): ?string
+    {
+        return is_string($value) && !str_contains($value, $this->apiKey) &&
+            preg_match('/^[A-Za-z0-9_-]{1,128}$/D', $value) === 1 ? $value : null;
+    }
+
+    private static function retryDelay(array $headers): float
     {
         foreach ($headers as $key => $value) {
             if (strtolower((string) $key) !== 'retry-after') { continue; }
@@ -518,6 +543,7 @@ final class FlowSpeechClient
             CURLOPT_TIMEOUT_MS => max(1, (int) floor($request['timeout'] * 1000)),
             CURLOPT_CONNECTTIMEOUT_MS => max(1, (int) floor(min(10, $request['timeout']) * 1000)),
             CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$responseHeaders): int {
+                if (preg_match('/^HTTP\/\S+\s+\d{3}/i', $line)) { $responseHeaders = []; }
                 $parts = explode(':', $line, 2);
                 if (count($parts) === 2) { $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]); }
                 return strlen($line);
@@ -535,8 +561,18 @@ final class FlowSpeechClient
         if ($oversized) { throw new FlowSpeechException('Response exceeded the configured size limit.', 0, 'response_too_large'); }
         if ($ok === false) {
             // Do not expose cURL messages which can contain signed result URLs.
-            throw new FlowSpeechException('Network request failed.', 0, 'network_error', true);
+            throw self::transportFailure($status, $responseHeaders);
         }
         return ['status' => $status, 'headers' => $responseHeaders, 'body' => $body];
+    }
+
+    /** Preserve received headers when a transport cannot finish the body. */
+    public static function transportFailure(int $status, array $headers): FlowSpeechException
+    {
+        $retryable = $status === 0 || ($status >= 200 && $status < 300) || $status === 429 ||
+            ($status >= 500 && $status <= 599);
+        $error = new FlowSpeechException('FlowSpeech response could not be read.', $status, 'network_error', $retryable);
+        $error->retryAfterSeconds = self::retryDelay($headers);
+        return $error;
     }
 }

@@ -360,4 +360,101 @@ foreach (['getJob', 'cancelJob', 'waitForJob', 'getAudio'] as $operation) {
 $client->createJob(INPUT, REQUEST_ID);
 $found = $client->findJob(strtoupper(REQUEST_ID));
 check($found['requestId'] === REQUEST_ID && $found['id'] === JOB_ID, 'Recovery lookup normalizes UUIDs');
+$privateUrl = 'https://private.example.test/audio.wav?signature=private-fixture';
+$unsafeTokens = ['fixture-only', 'prefix-fixture-only-suffix', $privateUrl, '', "bad\ncode",
+    "bad\0code", 'code.value', 'code:value', "\xc3\xa9", str_repeat('a', 129), 42, true, ['nested' => 'fixture-only']];
+foreach ($unsafeTokens as $unsafe) {
+    [$client, $state] = fake([response(['error' => ['code' => $unsafe, 'message' => $privateUrl,
+        'retryable' => false], 'traceId' => $unsafe], 403, ['Retry-After' => '17'])]);
+    try { $client->createJob(INPUT, REQUEST_ID); throw new RuntimeException('Expected HTTP error'); }
+    catch (FlowSpeechException $error) {
+        check($error->getMessage() === 'FlowSpeech API returned HTTP 403.', 'HTTP message is local and fixed');
+        check($error->errorCode === 'http_error' && $error->traceId === null, 'Unsafe metadata rejected');
+        check($error->getCode() === 403 && !$error->retryable && $error->retryAfterSeconds === 17.0, 'HTTP retry/status metadata retained');
+        check($error->requestId === REQUEST_ID && $error->jobId === null, 'HTTP error retains submitted request ID');
+        check($error->getPrevious() === null, 'No raw response exception chained');
+        check(!str_contains((string) $error, 'fixture-only') && !str_contains((string) $error, $privateUrl), 'Exception string contains no reflected credential or URL');
+    }
+    check(count($state->requests) === 1, 'Nonretryable reflection failure uses one request');
+}
+foreach (['TTS_FAILED', 'rate-limit_429', str_repeat('A', 128)] as $safe) {
+    [$client] = fake([response(['error' => ['code' => $safe, 'message' => 'fixture-only', 'retryable' => true],
+        'traceId' => $safe], 503, ['Retry-After' => '19'])], ['max_retries' => 0]);
+    $error = raises(static fn() => $client->createJob(INPUT, REQUEST_ID), $safe);
+    check($error->traceId === $safe && $error->retryable && $error->retryAfterSeconds === 19.0, 'Valid metadata is unchanged');
+    check($error->getMessage() === 'FlowSpeech API returned HTTP 503.', 'Even valid tokens do not permit arbitrary messages');
+}
+[$client] = fake([response(job('queued')), response(['error' => ['message' => 'fixture-only',
+    'code' => 'fixture-only'], 'traceId' => 'fixture-only'], 403)]);
+$created = $client->createJob(INPUT, REQUEST_ID);
+$error = raises(static fn() => $client->waitForJob($created), 'http_error');
+check($error->requestId === REQUEST_ID && $error->jobId === JOB_ID, 'Poll HTTP error retains both original IDs');
+
+foreach (['queued', 'running', 'merging', 'settling', 'success'] as $status) {
+    [$client] = fake([response(job($status, ['error' => null]))]);
+    $returned = $client->getJob(JOB_ID);
+    check(array_key_exists('error', $returned) && $returned['error'] === null, 'A null error remains null for ' . $status);
+    [$client] = fake([response(job($status))]);
+    check(!array_key_exists('error', $client->getJob(JOB_ID)), 'An absent error stays absent for ' . $status);
+}
+foreach (['failed', 'cancelled'] as $status) {
+    foreach (['fixture-only', $privateUrl, ['nested' => 'fixture-only']] as $unsafe) {
+        $raw = job($status, ['error' => ['code' => $unsafe, 'message' => $privateUrl, 'retryable' => true,
+            'traceId' => $unsafe, 'details' => 'fixture-only'], 'traceId' => $unsafe]);
+        [$client] = fake([response($raw)]);
+        $returned = $client->getJob(JOB_ID);
+        check($returned['error'] === ['code' => $status, 'message' => 'FlowSpeech job ' . $status . '.',
+            'retryable' => true, 'traceId' => null], 'Terminal error keeps safe DTO types and drops raw details');
+        check($returned['traceId'] === null && !str_contains(json_encode($returned), 'fixture-only') &&
+            !str_contains(json_encode($returned), $privateUrl), 'Returned terminal job is safe to render');
+        $error = raises(static fn() => $client->waitForJob($raw), $status);
+        check($error->requestId === REQUEST_ID && $error->jobId === JOB_ID, 'Terminal failure retains both IDs');
+        check(!str_contains((string) $error, 'fixture-only') && !str_contains((string) $error, $privateUrl), 'Terminal exception string is safe');
+    }
+    [$client] = fake([response(job($status, ['error' => ['code' => 'TTS_FAILED', 'message' => 'fixture-only', 'retryable' => false]]))]);
+    $returned = $client->getJob(JOB_ID);
+    check($returned['error'] === ['code' => 'TTS_FAILED', 'message' => 'FlowSpeech job ' . $status . '.', 'retryable' => false],
+        'Legal terminal code and false retryable survive');
+}
+$oldArgumentLength = ini_set('zend.exception_string_param_max_len', '4096');
+try {
+    [$client] = fake([response('', 403)], ['max_retries' => 0]);
+    $downloadJob = job('success', ['result' => array_replace(job()['result'], ['url' => $privateUrl])]);
+    $error = raises(static fn() => $client->downloadResult($downloadJob), 'http_error');
+    check(!str_contains((string) $error, $privateUrl), 'Verbose PHP exception formatting must not expose signed URL arguments');
+    check(str_contains((string) $error, 'Stack trace:') && str_contains((string) $error, 'FlowSpeechClient->send()'),
+        'Safe exception rendering retains stack locations and function names');
+} finally {
+    ini_set('zend.exception_string_param_max_len', $oldArgumentLength);
+}
+foreach ([true, false, null, 'true', 1, [], ['private' => 'fixture-only']] as $retryable) {
+    [$client] = fake([response(job('failed', ['error' => ['code' => 'TTS_FAILED', 'retryable' => $retryable]]))]);
+    $normalized = $client->getJob(JOB_ID);
+    check($normalized['error'] === ['code' => 'TTS_FAILED', 'message' => 'FlowSpeech job failed.',
+        'retryable' => $retryable === true], 'Terminal error always has safe string message and boolean retryable');
+}
+
+
+foreach ([401, 403, 404, 429, 503] as $status) {
+    $failure = FlowSpeechClient::transportFailure($status, ['Retry-After' => ['30']]);
+    [$client, $state] = fake([$failure, $failure], ['max_retries' => 1]);
+    $error = raises(static fn() => $client->createJob(INPUT, REQUEST_ID), 'network_error');
+    check($error->getCode() === $status, 'Incomplete response retains received HTTP status');
+    check($error->retryAfterSeconds === 30.0, 'Incomplete response retains server cooldown');
+    check($client->getRetryAfterSeconds() === 30.0, 'Client exposes the received cooldown');
+    check($error->requestId === REQUEST_ID, 'Incomplete response retains recovery ID');
+    $transient = $status === 429 || $status === 503;
+    check($error->retryable === $transient, 'Permanent HTTP failures must not retry');
+    check(count($state->requests) === ($transient ? 2 : 1), 'Bounded retries follow status');
+    check($state->waits === ($transient ? [30.0] : []), 'No early retry after body failure');
+    if ($transient) {
+        check($state->requests[0]['body'] === $state->requests[1]['body'], 'Retry preserves exact body');
+    }
+}
+$dated = FlowSpeechClient::transportFailure(429, ['retry-after' => gmdate('D, d M Y H:i:s', time() + 30) . ' GMT']);
+check($dated->retryAfterSeconds >= 29, 'Dated cooldown survives a failed body');
+[$client, $state] = fake([FlowSpeechClient::transportFailure(429, ['Retry-After' => '30'])], ['max_retries' => 1], 10);
+raises(static fn() => $client->createJob(INPUT, REQUEST_ID), 'deadline_exceeded');
+check(count($state->requests) === 1 && $state->waits === [], 'Deadline cannot shorten a received cooldown');
+
 echo "PASS: $checks assertions; no network or credits used.\n";

@@ -1,18 +1,20 @@
 # FlowSpeech PHP
 
-Release candidate 0.2.0 for the FlowSpeech public API v1. Requires PHP 8.1+,
+## Unreleased Security Follow-up
+
+If a response body is truncated or times out after headers arrive, the default transport retains HTTP status and Retry-After. Permanent HTTP failures do not retry; transient retries respect the server cooldown and total deadline. Diagnostics remain local and recovery IDs are retained.
+
+PHP client for the FlowSpeech public API v1. Requires PHP 8.1+,
 JSON and cURL for the default HTTPS transport.
 
 ## Install and Authenticate
-
-After the coordinator tags and publishes 0.2.0:
 
 ```bash
 composer require flowspeech/flowspeech-php:^0.2
 ```
 
-Until then, the existing Composer package may only expose dev-main.
-This checkout is not a published stable release.
+The latest published SDK is 0.2.0. Changes listed under Unreleased below are
+local candidates and are not included in that published version.
 
 An active paid Basic, Pro or Scale subscription and a developer API key from
 [API settings](https://flowspeech.io/settings/apikeys) are required. Trial,
@@ -78,6 +80,20 @@ are unsupported and rejected rather than silently forwarded.
 
 ## Timeouts and Transport
 
+### Unreleased Error Privacy Hardening
+
+HTTP and terminal-job messages use fixed local diagnostics, never remote text.
+Error codes and trace IDs are retained only when they are 1-128 ASCII letters,
+digits, underscores or hyphens and do not contain this client's API key.
+Invalid codes use a local fallback; invalid trace IDs become null. Job error
+objects retain a safe message and boolean retryable; error: null remains null.
+HTTP status, Retry-After and recovery IDs remain available.
+
+Exception strings retain frame names but omit arguments, which can contain
+signed URLs. Do not dump raw exception traces or client/transport objects;
+configure zend.exception_ignore_args=1 when collecting PHP diagnostic traces.
+These safeguards do not sanitize application-owned custom transport exceptions.
+
 Constructor: (apiKey, baseUrl='https://flowspeech.io', timeoutSeconds=120,
 transport=null, options=[]). The third argument is now a total deadline per
 high-level operation; separate public method calls each start a new deadline.
@@ -100,11 +116,13 @@ Result links grant access to anyone holding them; do not log them.
 
 ```bash
 php tests/contract.php
+node scripts/check-error-output.mjs
 node scripts/build-runtime.mjs
 # Install Composer dev dependencies into .tools/phpunit/vendor, then:
 node scripts/run-transport.mjs
 node scripts/build.mjs
 FLOWSPEECH_TEST_ROOT="$PWD/dist/verify/flowspeech-php" php tests/contract.php
+FLOWSPEECH_TEST_ROOT="$PWD/dist/verify/flowspeech-php" node scripts/check-error-output.mjs
 ```
 
 Tests use fake HTTP only, with no credentials, generation or paid credits.
