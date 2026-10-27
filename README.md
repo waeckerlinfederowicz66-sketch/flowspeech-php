@@ -13,8 +13,8 @@ JSON and cURL for the default HTTPS transport.
 composer require flowspeech/flowspeech-php:^0.2.1
 ```
 
-Version 0.2.1 is a prepared release candidate, not a publication claim.
-Its fixes are not included in the previously published 0.2.0 package.
+Version 0.2.1 includes the safety fixes described below. The previously
+published 0.2.0 package remains unchanged.
 
 An active paid Basic, Pro or Scale subscription and a developer API key from
 [API settings](https://flowspeech.io/settings/apikeys) are required. Trial,

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.1 - 2026-10-27 (release candidate)
+## 0.2.1 - 2026-10-27
 
 - Use fixed HTTP/terminal error messages and bounded, key-free ASCII code/trace
   tokens. Preserve status, Retry-After, recovery IDs and null job error semantics.
@@ -11,7 +11,7 @@
 - Preserve received status and Retry-After through cURL body interruptions and
   timeouts. Permanent failures do not retry; transient retries retain cooldown,
   request UUID and serialized bytes within the total deadline.
-- These candidate changes do not modify the published 0.2.0 package.
+- Previously published 0.2.0 artifacts remain unchanged.
 
 ## 0.2.0
 
