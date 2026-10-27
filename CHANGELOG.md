@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 - 2026-10-27 (release candidate)
 
 - Use fixed HTTP/terminal error messages and bounded, key-free ASCII code/trace
   tokens. Preserve status, Retry-After, recovery IDs and null job error semantics.
@@ -8,7 +8,10 @@
   omit unrecognized nested error metadata.
 - Omit exception call arguments from string rendering, including private result
   URLs. Add contract and actual CLI output regressions with fixture credentials.
-- These local candidate changes are not in the published 0.2.0 package.
+- Preserve received status and Retry-After through cURL body interruptions and
+  timeouts. Permanent failures do not retry; transient retries retain cooldown,
+  request UUID and serialized bytes within the total deadline.
+- These candidate changes do not modify the published 0.2.0 package.
 
 ## 0.2.0
 

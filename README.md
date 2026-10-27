@@ -1,6 +1,6 @@
 # FlowSpeech PHP
 
-## Unreleased Security Follow-up
+## 0.2.1 Security Follow-up
 
 If a response body is truncated or times out after headers arrive, the default transport retains HTTP status and Retry-After. Permanent HTTP failures do not retry; transient retries respect the server cooldown and total deadline. Diagnostics remain local and recovery IDs are retained.
 
@@ -10,11 +10,11 @@ JSON and cURL for the default HTTPS transport.
 ## Install and Authenticate
 
 ```bash
-composer require flowspeech/flowspeech-php:^0.2
+composer require flowspeech/flowspeech-php:^0.2.1
 ```
 
-The latest published SDK is 0.2.0. Changes listed under Unreleased below are
-local candidates and are not included in that published version.
+Version 0.2.1 is a prepared release candidate, not a publication claim.
+Its fixes are not included in the previously published 0.2.0 package.
 
 An active paid Basic, Pro or Scale subscription and a developer API key from
 [API settings](https://flowspeech.io/settings/apikeys) are required. Trial,
@@ -80,7 +80,7 @@ are unsupported and rejected rather than silently forwarded.
 
 ## Timeouts and Transport
 
-### Unreleased Error Privacy Hardening
+### Error Privacy Hardening
 
 HTTP and terminal-job messages use fixed local diagnostics, never remote text.
 Error codes and trace IDs are retained only when they are 1-128 ASCII letters,

@@ -11,7 +11,7 @@ namespace FlowSpeech;
  */
 final class FlowSpeechClient
 {
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.2.1';
     private string $apiKey;
     private string $baseUrl;
     private int $timeoutSeconds;
